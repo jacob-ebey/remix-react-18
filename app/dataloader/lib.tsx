@@ -1,4 +1,5 @@
 import { useId, useMemo } from "react";
+import { useLocation } from "remix";
 import invariant from "@remix-run/react/invariant";
 import jsesc from "jsesc";
 
@@ -8,6 +9,7 @@ export { DataloaderProvider } from "./context";
 export function useLoader<T = any>(id: string) {
   let dataloader = useDataloader();
   let internalId = useId();
+  let { key } = useLocation();
 
   let defered = useMemo(() => {
     invariant(
@@ -15,7 +17,8 @@ export function useLoader<T = any>(id: string) {
       "useLoader must be provided with a DataloaderProvider"
     );
 
-    let defered = {} as {
+    let defered = { resolved: false } as {
+      resolved: boolean;
       value?: T;
       error?: any;
       promise: Promise<void>;
@@ -25,15 +28,19 @@ export function useLoader<T = any>(id: string) {
       .then((response) => response.json())
       .then((value) => {
         defered.value = value;
+        defered.resolved = true;
       })
       .catch((error) => {
         defered.error = error;
+        defered.resolved = true;
       });
     return defered;
-  }, [id]);
+  }, [id, key]);
 
   return {
     Component() {
+      if (!defered.resolved) throw defered.promise;
+
       if (typeof document === "undefined") {
         let serialized = jsesc(
           { error: defered.error, value: defered.value },
@@ -49,7 +56,12 @@ export function useLoader<T = any>(id: string) {
           />
         );
       }
-      return null;
+      return (
+        <script
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{ __html: " " }}
+        />
+      );
     },
     load(): T {
       if (typeof defered.value !== "undefined") {

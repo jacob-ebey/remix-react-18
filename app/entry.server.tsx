@@ -1,60 +1,49 @@
-import { PassThrough } from "stream";
+import type { OutgoingHttpHeaders } from "http";
 
 // @ts-expect-error
 import { renderToPipeableStream } from "react-dom/server";
 import { RemixServer } from "remix";
 import type { EntryContext } from "remix";
 
+import { Context } from "./context";
 import { DataloaderProvider } from "./dataloader/lib";
 import { createServerDataloader } from "./dataloader/server";
 
-export default function handleRequest(
+export default async function handleRequest(
   request: Request,
   responseStatusCode: number,
   responseHeaders: Headers,
-  remixContext: EntryContext
+  remixContext: EntryContext,
+  { res }: Context
 ) {
   let dataloader = createServerDataloader(remixContext, request, {}, {});
 
-  responseHeaders.set("Content-Type", "text/html");
-  return renderToStringWithWritable(
-    <DataloaderProvider dataloader={dataloader}>
-      <RemixServer context={remixContext} url={request.url} />
-    </DataloaderProvider>,
-    {
-      status: responseStatusCode,
-      headers: responseHeaders,
-    }
-  );
-}
-
-function renderToStringWithWritable(
-  element: any,
-  init: ResponseInit,
-  timeout = 2000
-) {
-  return new Promise<Response>((resolve, reject) => {
-    const writable = new PassThrough();
-    console.log("HERE!");
+  return new Promise<void>((resolve) => {
     let didError = false;
-    const { pipe, abort } = renderToPipeableStream(element, {
-      onCompleteShell() {
-        console.log("HERE 2!");
-        pipe(writable);
+    const { pipe, abort } = renderToPipeableStream(
+      <DataloaderProvider dataloader={dataloader}>
+        <RemixServer context={remixContext} url={request.url} />
+      </DataloaderProvider>,
+      {
+        onCompleteShell() {
+          let statusCode = didError ? 500 : responseStatusCode;
+          let headers: Record<string, string[]> = {};
+          for (const [key, value] of responseHeaders) {
+            headers[key] = headers[key] || [];
+            headers[key].push(value);
+          }
+          res.writeHead(statusCode, undefined, headers);
+          pipe(res);
 
-        if (didError) {
-          init.status = 500;
-          init.statusText = "Internal Server Error";
-        }
-        // Response is buffering the stream 🤬
-        resolve(new Response(writable as any, init));
-      },
-      onError(err: Error) {
-        console.error(err);
-        didError = true;
-      },
-    });
+          resolve();
+        },
+        onError(err: Error) {
+          console.error(err);
+          didError = true;
+        },
+      }
+    );
 
-    setTimeout(abort, timeout);
+    setTimeout(abort, 2000);
   });
 }
